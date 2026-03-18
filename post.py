@@ -1,7 +1,12 @@
-"""GitHub Actions用: スプシから未投稿ストックを1件取得して投稿"""
+"""GitHub Actions用: スプシから未投稿ストックを1件取得して投稿
+
+24時間でN件のストックを均等間隔で投稿する。
+前回投稿からの経過時間をチェックし、間隔に達していたら投稿。
+"""
 import json
 import os
 import time
+from datetime import datetime, timezone, timedelta
 
 import gspread
 import httpx
@@ -10,6 +15,10 @@ SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "")
 REPLY_DELAY = int(os.environ.get("REPLY_DELAY", "5"))
 ACCOUNTS = json.loads(os.environ.get("ACCOUNTS_JSON", "[]"))
 GCP_CREDS = json.loads(os.environ.get("GCP_CREDENTIALS", "{}"))
+
+# 24時間で全ストックを消化する
+CYCLE_HOURS = 24
+JST = timezone(timedelta(hours=9))
 
 
 def api_request(method, url, data=None):
@@ -34,7 +43,6 @@ def post_with_reply(account, post_text, reply_text, media_urls):
     image_urls = [u for u in media_urls if u not in video_urls]
     post_media = video_urls if video_urls else image_urls
 
-    # メイン投稿
     if len(post_media) == 0:
         c = api_request("POST", base, {"media_type": "TEXT", "text": post_text, "access_token": token})
         time.sleep(3)
@@ -66,7 +74,6 @@ def post_with_reply(account, post_text, reply_text, media_urls):
 
     main_id = p["id"]
 
-    # リプライ
     if reply_text:
         time.sleep(REPLY_DELAY)
         rc = api_request("POST", base, {
@@ -84,7 +91,6 @@ def main():
         print("ACCOUNTS_JSON が設定されていません")
         return
 
-    # スプシ接続
     gc = gspread.service_account_from_dict(GCP_CREDS)
     sh = gc.open_by_key(SPREADSHEET_ID)
     ws = sh.get_worksheet(1)  # シート2
@@ -102,6 +108,48 @@ def main():
         posted_col = len(headers) + 1
         ws.update_cell(1, posted_col, "投稿済み")
 
+    # 未投稿数と総数を確認
+    total = sum(1 for r in all_rows if r.get("投稿文", ""))
+    posted = sum(1 for r in all_rows if r.get("投稿済み", ""))
+    remaining = total - posted
+
+    if remaining == 0:
+        print("未投稿のストックなし。終了。")
+        return
+
+    # 投稿間隔を計算（24時間 ÷ 総ストック数）
+    interval_minutes = (CYCLE_HOURS * 60) / total
+    print(f"総ストック: {total}件 / 投稿済み: {posted}件 / 残り: {remaining}件")
+    print(f"投稿間隔: {interval_minutes:.0f}分")
+
+    # 最後の投稿時刻を確認
+    last_posted_time = None
+    for row in reversed(all_rows):
+        posted_val = row.get("投稿済み", "")
+        if posted_val:
+            # 投稿済み列のフォーマット: "account:post_id:2026-03-18T16:50:20"
+            parts = posted_val.split(":")
+            if len(parts) >= 3:
+                try:
+                    time_str = ":".join(parts[2:])
+                    last_posted_time = datetime.fromisoformat(time_str)
+                    break
+                except ValueError:
+                    pass
+
+    now = datetime.now(JST)
+
+    if last_posted_time:
+        elapsed = (now - last_posted_time).total_seconds() / 60
+        print(f"前回投稿: {last_posted_time.strftime('%H:%M')} ({elapsed:.0f}分前)")
+
+        if elapsed < interval_minutes:
+            wait = interval_minutes - elapsed
+            print(f"間隔未達。あと{wait:.0f}分待ち。スキップ。")
+            return
+    else:
+        print("初回投稿")
+
     # 未投稿ストックを探す
     target_row = None
     target_data = None
@@ -112,13 +160,12 @@ def main():
             break
 
     if not target_data:
-        print("未投稿のストックなし。終了。")
+        print("未投稿のストックなし。")
         return
 
     # アカウント選択（ラウンドロビン）
     account = ACCOUNTS[(target_row - 2) % len(ACCOUNTS)]
 
-    # 投稿データ
     post_text = target_data.get("投稿文", "")
     reply_text = target_data.get("リプライ", "")
     media = [target_data.get(f"素材{i}", "") for i in range(1, 11) if target_data.get(f"素材{i}", "")]
@@ -127,12 +174,12 @@ def main():
     print(f"テキスト: {post_text[:60]}...")
     print(f"メディア: {len(media)}件")
 
-    # 投稿
     post_id = post_with_reply(account, post_text, reply_text, media)
 
-    # 投稿済みフラグ更新
-    ws.update_cell(target_row, posted_col, f"{account['name']}:{post_id}")
-    print(f"成功! @{account['name']} post_id={post_id}")
+    # 投稿済みフラグ（タイムスタンプ付き）
+    timestamp = now.isoformat()
+    ws.update_cell(target_row, posted_col, f"{account['name']}:{post_id}:{timestamp}")
+    print(f"成功! @{account['name']} post_id={post_id} at {now.strftime('%H:%M')}")
 
 
 if __name__ == "__main__":
