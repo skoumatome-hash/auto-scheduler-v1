@@ -1,0 +1,33 @@
+name: Threads Auto Post
+
+on:
+  schedule:
+    # 111分間隔 ≈ 約2時間ごと（cronは分単位なので近似）
+    # 毎日 0:00, 2:00, 4:00, 6:00, 8:00, 10:00, 12:00, 14:00, 16:00, 18:00, 20:00, 22:00 (JST)
+    # UTC: 15:00, 17:00, 19:00, 21:00, 23:00, 1:00, 3:00, 5:00, 7:00, 9:00, 11:00, 13:00
+    - cron: '0 */2 * * *'
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install gspread google-auth httpx
+
+      - name: Run scheduled post
+        env:
+          ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          REPLY_DELAY: '5'
+        run: python post.py
