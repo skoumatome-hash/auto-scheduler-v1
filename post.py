@@ -8,6 +8,7 @@ import os
 import time
 from datetime import datetime, timezone, timedelta
 
+import anthropic
 import gspread
 import httpx
 
@@ -15,8 +16,10 @@ SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "")
 REPLY_DELAY = int(os.environ.get("REPLY_DELAY", "5"))
 ACCOUNTS = json.loads(os.environ.get("ACCOUNTS_JSON", "[]"))
 GCP_CREDS = json.loads(os.environ.get("GCP_CREDENTIALS", "{}"))
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
-# 24時間で全ストックを消化する
+# 1日25投稿、58分間隔
+POSTS_PER_DAY = 25
 CYCLE_HOURS = 24
 JST = timezone(timedelta(hours=9))
 
@@ -86,6 +89,68 @@ def post_with_reply(account, post_text, reply_text, media_urls):
     return main_id
 
 
+def rewrite_text(original, level="light"):
+    """投稿文をClaude APIでリライト"""
+    if not ANTHROPIC_API_KEY:
+        return original
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    levels = {
+        "light": "言い回しだけ軽く変える。構成・改行はほぼそのまま。元と7割似てOK",
+        "medium": "表現や切り口を少しアレンジ。元と5割似てOK",
+    }
+    resp = client.messages.create(
+        model="claude-sonnet-4-20250514", max_tokens=1024,
+        messages=[{"role": "user", "content": f"""以下の投稿文をリライトしてください。
+
+【元の投稿文】
+{original}
+
+【リライト強度】
+{levels.get(level, levels['light'])}
+
+【ルール】
+- 改行は元投稿を参考に読みやすく
+- ハッシュタグは使わない
+- 外国語の場合は自然な日本語に翻訳
+- リライト結果だけを返して"""}],
+    )
+    return resp.content[0].text.strip()
+
+
+def rewrite_reply(original_reply, post_text, amazon_urls, rakuten_urls):
+    """リプライをClaude APIでリライト+アフィURL付与"""
+    if not ANTHROPIC_API_KEY:
+        return original_reply
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    resp = client.messages.create(
+        model="claude-sonnet-4-20250514", max_tokens=512,
+        messages=[{"role": "user", "content": f"""以下のリプライを商品が売れるようにリライトしてください。
+
+【元のメイン投稿】
+{post_text[:200]}
+
+【元のリプライ】
+{original_reply}
+
+【ルール】
+- 紹介文は2〜3行で短く
+- 自然な口語体で押し売り感なし
+- 外国語なら日本語に翻訳
+- URLの下には何も書かない
+- 紹介文だけ返して。URL部分はこちらで付ける"""}],
+    )
+    intro = resp.content[0].text.strip()
+    parts = [intro, ""]
+    if rakuten_urls:
+        parts.append("楽天PR")
+        parts.append(rakuten_urls[0])
+        parts.append("")
+    if amazon_urls:
+        parts.append("amazonPR")
+        parts.append(amazon_urls[0])
+    return "\n".join(parts).strip()
+
+
 def main():
     if not ACCOUNTS:
         print("ACCOUNTS_JSON が設定されていません")
@@ -93,7 +158,7 @@ def main():
 
     gc = gspread.service_account_from_dict(GCP_CREDS)
     sh = gc.open_by_key(SPREADSHEET_ID)
-    ws = sh.get_worksheet(1)  # シート2
+    ws = sh.sheet1  # 元データタブから読む
 
     all_rows = ws.get_all_records()
     headers = ws.row_values(1)
@@ -117,17 +182,17 @@ def main():
         print("未投稿のストックなし。終了。")
         return
 
-    # 投稿間隔を計算（24時間 ÷ 総ストック数）
-    interval_minutes = (CYCLE_HOURS * 60) / total
+    # 投稿間隔: 24h ÷ 1日あたりの投稿数（25件）
+    daily_posts = min(POSTS_PER_DAY, remaining)
+    interval_minutes = (CYCLE_HOURS * 60) / daily_posts
     print(f"総ストック: {total}件 / 投稿済み: {posted}件 / 残り: {remaining}件")
-    print(f"投稿間隔: {interval_minutes:.0f}分")
+    print(f"1日投稿数: {daily_posts}件 / 間隔: {interval_minutes:.0f}分")
 
     # 最後の投稿時刻を確認
     last_posted_time = None
     for row in reversed(all_rows):
-        posted_val = row.get("投稿済み", "")
+        posted_val = str(row.get("投稿済み", ""))
         if posted_val:
-            # 投稿済み列のフォーマット: "account:post_id:2026-03-18T16:50:20"
             parts = posted_val.split(":")
             if len(parts) >= 3:
                 try:
@@ -142,7 +207,6 @@ def main():
     if last_posted_time:
         elapsed = (now - last_posted_time).total_seconds() / 60
         print(f"前回投稿: {last_posted_time.strftime('%H:%M')} ({elapsed:.0f}分前)")
-
         if elapsed < interval_minutes:
             wait = interval_minutes - elapsed
             print(f"間隔未達。あと{wait:.0f}分待ち。スキップ。")
@@ -163,20 +227,54 @@ def main():
         print("未投稿のストックなし。")
         return
 
-    # アカウント選択（ラウンドロビン）
-    account = ACCOUNTS[(target_row - 2) % len(ACCOUNTS)]
+    # アカウント選択（ラウンドロビン、同じ日に同じ垢を使い回さない）
+    today_str = now.strftime("%Y-%m-%d")
+    used_today = set()
+    for row in all_rows:
+        pv = str(row.get("投稿済み", ""))
+        if today_str in pv:
+            acc_name = pv.split(":")[0]
+            used_today.add(acc_name)
 
-    post_text = target_data.get("投稿文", "")
-    reply_text = target_data.get("リプライ", "")
-    media = [target_data.get(f"素材{i}", "") for i in range(1, 11) if target_data.get(f"素材{i}", "")]
+    account = None
+    for acc in ACCOUNTS:
+        if acc["name"] not in used_today:
+            account = acc
+            break
+    if not account:
+        # 全垢使い切った場合はラウンドロビン
+        account = ACCOUNTS[(target_row - 2) % len(ACCOUNTS)]
+
+    # 投稿文をリライト
+    original_text = target_data.get("投稿文", "")
+    post_text = rewrite_text(original_text)
+    print(f"リライト完了: {post_text[:60]}...")
+
+    # リプライ（URLがある場合のみ）
+    amazon_url = target_data.get("amazonURL", "")
+    rakuten_url = target_data.get("楽天URL", "")
+    amazon_list = amazon_url.split() if amazon_url else []
+    rakuten_list = rakuten_url.split() if rakuten_url else []
+
+    reply_text = ""
+    if amazon_list or rakuten_list:
+        original_reply = target_data.get("リプライ文言", "")
+        reply_text = rewrite_reply(original_reply, original_text, amazon_list, rakuten_list)
+        print(f"リプライ: {reply_text[:60]}...")
+
+    # メディア
+    media = []
+    for key in ["素材URL1","素材URL2","素材URL3","素材URL4","素材URL5","素材URL6","素材URL7","素材URL8","素材URL9","素材URL10"]:
+        v = target_data.get(key, "")
+        if v:
+            media.append(v)
 
     print(f"投稿: row={target_row} account=@{account['name']}")
-    print(f"テキスト: {post_text[:60]}...")
     print(f"メディア: {len(media)}件")
 
     post_id = post_with_reply(account, post_text, reply_text, media)
 
-    # 投稿済みフラグ（タイムスタンプ付き）
+    # 投稿済みフラグ
     timestamp = now.isoformat()
     ws.update_cell(target_row, posted_col, f"{account['name']}:{post_id}:{timestamp}")
     print(f"成功! @{account['name']} post_id={post_id} at {now.strftime('%H:%M')}")
