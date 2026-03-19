@@ -20,12 +20,13 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install gspread google-auth httpx
+        run: pip install gspread google-auth httpx anthropic
 
       - name: Run scheduled post
         env:
           ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
           GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           REPLY_DELAY: '5'
         run: python post.py
