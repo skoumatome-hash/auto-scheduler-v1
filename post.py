@@ -158,7 +158,7 @@ def main():
 
     gc = gspread.service_account_from_dict(GCP_CREDS)
     sh = gc.open_by_key(SPREADSHEET_ID)
-    ws = sh.sheet1  # 元データタブから読む
+    ws = sh.get_worksheet(1)  # リライト済みタブから読む
 
     all_rows = ws.get_all_records()
     headers = ws.row_values(1)
