@@ -30,3 +30,35 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           REPLY_DELAY: '5'
         run: python post.py
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: |
+          python -c "
+          import json, os, gspread
+          from google.oauth2.service_account import Credentials
+          from datetime import datetime, timezone, timedelta
+
+          JST = timezone(timedelta(hours=9))
+          now = datetime.now(JST).strftime('%Y-%m-%d %H:%M')
+
+          creds_json = json.loads(os.environ['GCP_CREDENTIALS'])
+          creds = Credentials.from_service_account_info(creds_json, scopes=['https://www.googleapis.com/auth/spreadsheets'])
+          gc = gspread.authorize(creds)
+          sh = gc.open_by_key(os.environ['SPREADSHEET_ID'])
+
+          try:
+              ws = sh.worksheet('エラーログ')
+          except:
+              ws = sh.add_worksheet(title='エラーログ', rows=100, cols=5)
+              ws.update(values=[['日時', 'ステータス', '詳細']], range_name='A1:C1', value_input_option='USER_ENTERED')
+
+          row = ws.get_all_values()
+          next_row = len(row) + 1
+          ws.update(values=[[now, 'FAILURE', 'GitHub Actions投稿ジョブが失敗']], range_name=f'A{next_row}:C{next_row}', value_input_option='USER_ENTERED')
+          print(f'エラーログ記録: {now}')
+          "
