@@ -245,11 +245,7 @@ def main():
             "range": f"{_col_letter(needed_cols['投稿予定時刻'])}{row_num}",
             "values": [[time_str]],
         })
-        # 投稿済みをリセット
-        updates.append({
-            "range": f"{_col_letter(needed_cols['投稿済み'])}{row_num}",
-            "values": [[""]],
-        })
+        # 投稿済み列は触らない（履歴として残す）
 
         print(f"  [{idx+1}/{total}] @{account['name']} {time_str} | {rewritten_text[:40]}...")
 

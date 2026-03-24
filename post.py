@@ -221,13 +221,15 @@ def main():
     else:
         print("初回投稿")
 
-    # 未投稿ストック（リライト結果あり + 投稿済み空）を探す
+    # 未投稿ストック（リライト結果あり + 今日まだ投稿してないもの）を探す
+    today_str = now.strftime("%Y-%m-%d")
     target_row = None
     target_data = None
     for i, row in enumerate(all_rows):
         rewritten = row.get("リライト結果", "")
-        posted = row.get("投稿済み", "")
-        if rewritten and not posted:
+        posted = str(row.get("投稿済み", ""))
+        # 今日の日付が入ってたらスキップ（今日は既に投稿済み）
+        if rewritten and today_str not in posted:
             target_row = i + 2
             target_data = row
             break
