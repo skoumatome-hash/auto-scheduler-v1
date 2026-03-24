@@ -1,17 +1,74 @@
 """毎日0時に実行: 143投稿全部をリライト+担当垢+投稿予定時刻を元データタブに書く"""
 import json
 import os
+import re
 from datetime import datetime, timezone, timedelta
+from urllib.parse import quote
 
 import anthropic
 import gspread
+import httpx
 
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "")
 ACCOUNTS = json.loads(os.environ.get("ACCOUNTS_JSON", "[]"))
 GCP_CREDS = json.loads(os.environ.get("GCP_CREDENTIALS", "{}"))
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
+# アフィリエイト設定
+AMAZON_TAG = "beautyhack-22"
+RAKUTEN_ID = "51ff718c.e0bde7a9.51ff718d.6408b951"
+
 JST = timezone(timedelta(hours=9))
+
+
+def resolve_short_url(short_url):
+    """短縮URL（amzn.to, a.r10.to等）を展開してリダイレクト先を取得"""
+    try:
+        with httpx.Client(follow_redirects=False, timeout=10) as client:
+            resp = client.head(short_url)
+            return resp.headers.get("location", short_url)
+    except Exception:
+        return short_url
+
+
+def convert_amazon_url(url):
+    """AmazonURLをジーマのアフィコード付きに変換"""
+    # 短縮URL展開
+    if "amzn.to" in url or "amzn.asia" in url:
+        url = resolve_short_url(url)
+
+    # ASINを抽出
+    asin_match = re.search(r'/(?:dp|gp/product)/([A-Z0-9]{10})', url)
+    if asin_match:
+        asin = asin_match.group(1)
+        return f"https://www.amazon.co.jp/dp/{asin}?tag={AMAZON_TAG}"
+
+    # ASIN取れない場合はtagだけ付け替え
+    if "amazon.co.jp" in url or "amazon.com" in url:
+        # 既存のtagを除去
+        url = re.sub(r'[?&]tag=[^&]*', '', url)
+        separator = '&' if '?' in url else '?'
+        return f"{url}{separator}tag={AMAZON_TAG}"
+
+    return url
+
+
+def convert_rakuten_url(url):
+    """楽天URLをジーマのアフィコード付きに変換"""
+    # 短縮URL展開
+    if "a.r10.to" in url:
+        url = resolve_short_url(url)
+
+    # 既にアフィリンクの場合はIDを差し替え
+    if "hb.afl.rakuten.co.jp" in url:
+        return re.sub(r'/hgc/[^/]+/', f'/hgc/{RAKUTEN_ID}/', url)
+
+    # 楽天ROOMは除外
+    if "room.rakuten.co.jp" in url:
+        return ""
+
+    # 通常の楽天URLをアフィリンクでラップ
+    return f"https://hb.afl.rakuten.co.jp/hgc/{RAKUTEN_ID}/?pc={quote(url)}"
 
 
 def rewrite_text(client, original):
@@ -53,13 +110,21 @@ def rewrite_reply(client, original_reply, post_text, amazon_urls, rakuten_urls):
     )
     intro = resp.content[0].text.strip()
     parts = [intro, ""]
-    if rakuten_urls:
+
+    # 楽天URLをジーマのアフィコードに変換
+    converted_rakuten = [convert_rakuten_url(u) for u in rakuten_urls if u]
+    converted_rakuten = [u for u in converted_rakuten if u]  # 空文字除去（楽天ROOM等）
+    if converted_rakuten:
         parts.append("楽天PR")
-        parts.append(rakuten_urls[0])
+        parts.append(converted_rakuten[0])
         parts.append("")
-    if amazon_urls:
+
+    # AmazonURLをジーマのアフィコードに変換
+    converted_amazon = [convert_amazon_url(u) for u in amazon_urls if u]
+    if converted_amazon:
         parts.append("amazonPR")
-        parts.append(amazon_urls[0])
+        parts.append(converted_amazon[0])
+
     return "\n".join(parts).strip()
 
 
