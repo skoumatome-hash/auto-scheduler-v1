@@ -46,34 +46,41 @@ def post_with_reply(account, post_text, reply_text, media_urls):
     image_urls = [u for u in media_urls if u not in video_urls]
     post_media = video_urls if video_urls else image_urls
 
-    if len(post_media) == 0:
+    p = None
+    try:
+        if len(post_media) == 0:
+            raise ValueError("no media")
+
+        elif len(post_media) == 1:
+            is_vid = "/video/upload/" in post_media[0]
+            payload = {"media_type": "VIDEO" if is_vid else "IMAGE", "text": post_text, "access_token": token}
+            payload["video_url" if is_vid else "image_url"] = post_media[0]
+            c = api_request("POST", base, payload)
+            time.sleep(5)
+            p = api_request("POST", pub, {"creation_id": c["id"], "access_token": token})
+
+        else:
+            children = []
+            for mu in post_media[:10]:
+                is_vid = "/video/upload/" in mu
+                payload = {"media_type": "VIDEO" if is_vid else "IMAGE", "is_carousel_item": "true", "access_token": token}
+                payload["video_url" if is_vid else "image_url"] = mu
+                r = api_request("POST", base, payload)
+                children.append(r["id"])
+                time.sleep(5)
+            car = api_request("POST", base, {
+                "media_type": "CAROUSEL", "children": ",".join(children),
+                "text": post_text, "access_token": token,
+            })
+            time.sleep(3)
+            p = api_request("POST", pub, {"creation_id": car["id"], "access_token": token})
+
+    except Exception as e:
+        # メディア投稿失敗 → テキストのみでフォールバック
+        print(f"メディア投稿失敗、テキストのみで投稿: {e}")
         c = api_request("POST", base, {"media_type": "TEXT", "text": post_text, "access_token": token})
         time.sleep(3)
         p = api_request("POST", pub, {"creation_id": c["id"], "access_token": token})
-
-    elif len(post_media) == 1:
-        is_vid = "/video/upload/" in post_media[0]
-        payload = {"media_type": "VIDEO" if is_vid else "IMAGE", "text": post_text, "access_token": token}
-        payload["video_url" if is_vid else "image_url"] = post_media[0]
-        c = api_request("POST", base, payload)
-        time.sleep(5)
-        p = api_request("POST", pub, {"creation_id": c["id"], "access_token": token})
-
-    else:
-        children = []
-        for mu in post_media[:10]:
-            is_vid = "/video/upload/" in mu
-            payload = {"media_type": "VIDEO" if is_vid else "IMAGE", "is_carousel_item": "true", "access_token": token}
-            payload["video_url" if is_vid else "image_url"] = mu
-            r = api_request("POST", base, payload)
-            children.append(r["id"])
-            time.sleep(5)
-        car = api_request("POST", base, {
-            "media_type": "CAROUSEL", "children": ",".join(children),
-            "text": post_text, "access_token": token,
-        })
-        time.sleep(3)
-        p = api_request("POST", pub, {"creation_id": car["id"], "access_token": token})
 
     main_id = p["id"]
 
