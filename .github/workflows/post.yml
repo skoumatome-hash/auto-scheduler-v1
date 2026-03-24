@@ -2,8 +2,8 @@ name: Threads Auto Post
 
 on:
   schedule:
-    # 1時間ごとに実行。スクリプト内で103分間隔をチェック。
-    - cron: '0 * * * *'
+    # 10分ごとに実行。143件/日を均等に投稿。
+    - cron: '*/10 * * * *'
   workflow_dispatch:  # 手動実行も可能
 
 jobs:

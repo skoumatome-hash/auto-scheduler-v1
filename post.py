@@ -189,50 +189,33 @@ def main():
         print("未投稿のストックなし。終了。")
         return
 
-    # 投稿間隔: リライトバッチで設定済みの予定時刻を使う
-    daily_posts = remaining
-    interval_minutes = (CYCLE_HOURS * 60) / max(daily_posts, 1)
-    print(f"総ストック: {total}件 / 投稿済み: {posted}件 / 残り: {remaining}件")
-    print(f"1日投稿数: {daily_posts}件 / 間隔: {interval_minutes:.0f}分")
-
-    # 最後の投稿時刻を確認
-    last_posted_time = None
-    for row in reversed(all_rows):
-        posted_val = str(row.get("投稿済み", ""))
-        if posted_val:
-            parts = posted_val.split(":")
-            if len(parts) >= 3:
-                try:
-                    time_str = ":".join(parts[2:])
-                    last_posted_time = datetime.fromisoformat(time_str)
-                    break
-                except ValueError:
-                    pass
-
     now = datetime.now(JST)
-
-    if last_posted_time:
-        elapsed = (now - last_posted_time).total_seconds() / 60
-        print(f"前回投稿: {last_posted_time.strftime('%H:%M')} ({elapsed:.0f}分前)")
-        if elapsed < interval_minutes:
-            wait = interval_minutes - elapsed
-            print(f"間隔未達。あと{wait:.0f}分待ち。スキップ。")
-            return
-    else:
-        print("初回投稿")
-
-    # 未投稿ストック（リライト結果あり + 今日まだ投稿してないもの）を探す
+    now_hm = now.strftime("%H:%M")
     today_str = now.strftime("%Y-%m-%d")
+
+    print(f"総ストック: {total}件 / 投稿済み: {posted}件 / 残り: {remaining}件")
+    print(f"現在時刻: {now_hm}")
+
+    # 投稿予定時刻が現在時刻以前 + 今日まだ投稿してないものを探す
     target_row = None
     target_data = None
     for i, row in enumerate(all_rows):
         rewritten = row.get("リライト結果", "")
-        posted = str(row.get("投稿済み", ""))
-        # 今日の日付が入ってたらスキップ（今日は既に投稿済み）
-        if rewritten and today_str not in posted:
-            target_row = i + 2
-            target_data = row
-            break
+        scheduled = row.get("投稿予定時刻", "")
+        posted_val = str(row.get("投稿済み", ""))
+
+        if not rewritten or not scheduled:
+            continue
+        # 今日既に投稿済みならスキップ
+        if today_str in posted_val:
+            continue
+        # 予定時刻がまだ来てないならスキップ
+        if scheduled > now_hm:
+            continue
+
+        target_row = i + 2
+        target_data = row
+        break
 
     if not target_data:
         print("投稿予定のストックなし（リライトバッチ未実行？）")
