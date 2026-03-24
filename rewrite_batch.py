@@ -189,10 +189,10 @@ def main():
         print("ストックなし")
         return
 
-    # 投稿予定時刻を計算（10分刻み、cronと一致させる）
+    # 投稿予定時刻を計算（GAS1時間トリガーに合わせる）
     now = datetime.now(JST)
     today_start = now.replace(hour=0, minute=30, second=0, microsecond=0)
-    interval_minutes = 10  # 10分ごと（cronと同じ間隔）
+    interval_minutes = max(10, (23 * 60) // total)  # 143件なら約10分間隔
 
     # 担当垢を割り当て（ラウンドロビン）
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
