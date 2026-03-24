@@ -21,18 +21,32 @@ RAKUTEN_ID = "51ff718c.e0bde7a9.51ff718d.6408b951"
 JST = timezone(timedelta(hours=9))
 
 
+def clean_url(url):
+    """URLの末尾のゴミ文字（絵文字、ゼロ幅文字、ORC U+FFFC等）を除去"""
+    url = url.strip()
+    while url and (ord(url[-1]) > 127 or ord(url[-1]) < 33):
+        url = url[:-1]
+    url = url.rstrip('.,;:!?）)」』】>》')
+    return url
+
+
 def resolve_short_url(short_url):
     """短縮URL（amzn.to, a.r10.to等）を展開してリダイレクト先を取得"""
+    short_url = clean_url(short_url)
     try:
         with httpx.Client(follow_redirects=False, timeout=10) as client:
             resp = client.head(short_url)
-            return resp.headers.get("location", short_url)
+            loc = resp.headers.get("location", "")
+            if loc and loc.startswith("http"):
+                return loc
+            return short_url
     except Exception:
         return short_url
 
 
 def convert_amazon_url(url):
     """AmazonURLをジーマのアフィコード付きに変換"""
+    url = clean_url(url)
     # 短縮URL展開
     if "amzn.to" in url or "amzn.asia" in url:
         url = resolve_short_url(url)
@@ -55,6 +69,7 @@ def convert_amazon_url(url):
 
 def convert_rakuten_url(url):
     """楽天URLをジーマのアフィコード付きに変換"""
+    url = clean_url(url)
     # 短縮URL展開
     if "a.r10.to" in url:
         url = resolve_short_url(url)
