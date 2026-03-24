@@ -2,8 +2,8 @@ name: Threads Auto Post
 
 on:
   schedule:
-    # 10分ごとに実行。143件/日を均等に投稿。
-    - cron: '*/10 * * * *'
+    # 1時間ごとに実行（安定実績あり）。1回で予定時刻を過ぎた分をまとめて投稿。
+    - cron: '0 * * * *'
   workflow_dispatch:  # 手動実行も可能
 
 jobs:

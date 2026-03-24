@@ -194,11 +194,10 @@ def main():
     today_str = now.strftime("%Y-%m-%d")
 
     print(f"総ストック: {total}件 / 投稿済み: {posted}件 / 残り: {remaining}件")
-    print(f"現在時刻: {now_hm}")
+    print(f"現在時刻(JST): {now_hm}")
 
-    # 投稿予定時刻が現在時刻以前 + 今日まだ投稿してないものを探す
-    target_row = None
-    target_data = None
+    # 予定時刻を過ぎた未投稿をまとめて収集
+    targets = []
     for i, row in enumerate(all_rows):
         rewritten = row.get("リライト結果", "")
         scheduled = row.get("投稿予定時刻", "")
@@ -206,67 +205,69 @@ def main():
 
         if not rewritten or not scheduled:
             continue
-        # 今日既に投稿済みならスキップ
         if today_str in posted_val:
             continue
-        # 予定時刻がまだ来てないならスキップ
         if scheduled > now_hm:
             continue
 
-        target_row = i + 2
-        target_data = row
-        break
+        targets.append((i + 2, row))
 
-    if not target_data:
-        print("投稿予定のストックなし（リライトバッチ未実行？）")
+    if not targets:
+        print("投稿予定のストックなし。スキップ。")
         return
 
-    # 担当垢を元データから取得
-    assigned = target_data.get("担当垢", "").replace("@", "")
-    account = None
-    for acc in ACCOUNTS:
-        if acc["name"] == assigned:
-            account = acc
-            break
-    if not account:
-        account = ACCOUNTS[(target_row - 2) % len(ACCOUNTS)]
+    print(f"今回投稿する件数: {len(targets)}件")
 
-    # リライト済みテキストを使う（リライト不要）
-    post_text = target_data.get("リライト結果", "")
-    print(f"投稿文: {post_text[:60]}...")
+    # まとめて投稿（各投稿間に30秒wait）
+    success_count = 0
+    for idx, (target_row, target_data) in enumerate(targets):
+        # 担当垢
+        assigned = target_data.get("担当垢", "").replace("@", "")
+        account = None
+        for acc in ACCOUNTS:
+            if acc["name"] == assigned:
+                account = acc
+                break
+        if not account:
+            account = ACCOUNTS[(target_row - 2) % len(ACCOUNTS)]
 
-    # リプライ結果
-    reply_text = target_data.get("リプライ結果", "")
-    if reply_text:
-        print(f"リプライ: {reply_text[:60]}...")
+        post_text = target_data.get("リライト結果", "")
+        reply_text = target_data.get("リプライ結果", "")
 
-    # メディア
-    media = []
-    for key in ["素材URL1","素材URL2","素材URL3","素材URL4","素材URL5","素材URL6","素材URL7","素材URL8","素材URL9","素材URL10"]:
-        v = target_data.get(key, "")
-        if v:
-            media.append(v)
+        media = []
+        for key in ["素材URL1","素材URL2","素材URL3","素材URL4","素材URL5","素材URL6","素材URL7","素材URL8","素材URL9","素材URL10"]:
+            v = target_data.get(key, "")
+            if v:
+                media.append(v)
 
-    print(f"投稿: row={target_row} account=@{account['name']}")
-    print(f"メディア: {len(media)}件")
+        print(f"\n[{idx+1}/{len(targets)}] row={target_row} @{account['name']} 予定:{target_data.get('投稿予定時刻','')}")
 
-    post_id = post_with_reply(account, post_text, reply_text, media)
+        try:
+            post_id = post_with_reply(account, post_text, reply_text, media)
 
-    # permalink取得
-    permalink = ""
-    try:
-        info = api_request("GET", f"https://graph.threads.net/v1.0/{post_id}?fields=permalink&access_token={account['token']}")
-        permalink = info.get("permalink", "")
-    except Exception:
-        pass
+            permalink = ""
+            try:
+                info = api_request("GET", f"https://graph.threads.net/v1.0/{post_id}?fields=permalink&access_token={account['token']}")
+                permalink = info.get("permalink", "")
+            except Exception:
+                pass
 
-    # 投稿済みフラグ（垢名 | 日時 | post_id | permalink）
-    timestamp = now.strftime("%Y-%m-%d %H:%M")
-    posted_value = f"@{account['name']} | {timestamp} | {post_id} | {permalink}"
-    ws.update_cell(target_row, posted_col, posted_value)
-    print(f"成功! @{account['name']} post_id={post_id} at {now.strftime('%H:%M')}")
-    if permalink:
-        print(f"URL: {permalink}")
+            timestamp = now.strftime("%Y-%m-%d %H:%M")
+            posted_value = f"@{account['name']} | {timestamp} | {post_id} | {permalink}"
+            ws.update_cell(target_row, posted_col, posted_value)
+            print(f"  成功! post_id={post_id}")
+            if permalink:
+                print(f"  URL: {permalink}")
+            success_count += 1
+
+        except Exception as e:
+            print(f"  失敗: {e}")
+
+        # 次の投稿まで30秒wait（最後の投稿以外）
+        if idx < len(targets) - 1:
+            time.sleep(30)
+
+    print(f"\n完了! {success_count}/{len(targets)}件投稿成功")
 
 
 if __name__ == "__main__":
