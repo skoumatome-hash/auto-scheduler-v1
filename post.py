@@ -281,10 +281,21 @@ def main():
 
     post_id = post_with_reply(account, post_text, reply_text, media)
 
-    # 投稿済みフラグ
-    timestamp = now.isoformat()
-    ws.update_cell(target_row, posted_col, f"{account['name']}:{post_id}:{timestamp}")
+    # permalink取得
+    permalink = ""
+    try:
+        info = api_request("GET", f"https://graph.threads.net/v1.0/{post_id}?fields=permalink&access_token={account['token']}")
+        permalink = info.get("permalink", "")
+    except Exception:
+        pass
+
+    # 投稿済みフラグ（垢名 | 日時 | post_id | permalink）
+    timestamp = now.strftime("%Y-%m-%d %H:%M")
+    posted_value = f"@{account['name']} | {timestamp} | {post_id} | {permalink}"
+    ws.update_cell(target_row, posted_col, posted_value)
     print(f"成功! @{account['name']} post_id={post_id} at {now.strftime('%H:%M')}")
+    if permalink:
+        print(f"URL: {permalink}")
 
 
 if __name__ == "__main__":
