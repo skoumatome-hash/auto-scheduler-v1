@@ -1,0 +1,31 @@
+name: Daily Rewrite Batch
+
+on:
+  schedule:
+    # 毎日0時（JST）= UTC 15:00
+    - cron: '0 15 * * *'
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  rewrite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install gspread google-auth anthropic
+
+      - name: Run rewrite batch
+        env:
+          ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python rewrite_batch.py

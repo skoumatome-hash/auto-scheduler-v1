@@ -189,9 +189,9 @@ def main():
         print("未投稿のストックなし。終了。")
         return
 
-    # 投稿間隔: 24h ÷ 1日あたりの投稿数（25件）
-    daily_posts = min(POSTS_PER_DAY, remaining)
-    interval_minutes = (CYCLE_HOURS * 60) / daily_posts
+    # 投稿間隔: リライトバッチで設定済みの予定時刻を使う
+    daily_posts = remaining
+    interval_minutes = (CYCLE_HOURS * 60) / max(daily_posts, 1)
     print(f"総ストック: {total}件 / 投稿済み: {posted}件 / 残り: {remaining}件")
     print(f"1日投稿数: {daily_posts}件 / 間隔: {interval_minutes:.0f}分")
 
@@ -221,52 +221,38 @@ def main():
     else:
         print("初回投稿")
 
-    # 未投稿ストックを探す
+    # 未投稿ストック（リライト結果あり + 投稿済み空）を探す
     target_row = None
     target_data = None
     for i, row in enumerate(all_rows):
-        if not row.get("投稿済み", "") and row.get("投稿文", ""):
+        rewritten = row.get("リライト結果", "")
+        posted = row.get("投稿済み", "")
+        if rewritten and not posted:
             target_row = i + 2
             target_data = row
             break
 
     if not target_data:
-        print("未投稿のストックなし。")
+        print("投稿予定のストックなし（リライトバッチ未実行？）")
         return
 
-    # アカウント選択（ラウンドロビン、同じ日に同じ垢を使い回さない）
-    today_str = now.strftime("%Y-%m-%d")
-    used_today = set()
-    for row in all_rows:
-        pv = str(row.get("投稿済み", ""))
-        if today_str in pv:
-            acc_name = pv.split(":")[0]
-            used_today.add(acc_name)
-
+    # 担当垢を元データから取得
+    assigned = target_data.get("担当垢", "").replace("@", "")
     account = None
     for acc in ACCOUNTS:
-        if acc["name"] not in used_today:
+        if acc["name"] == assigned:
             account = acc
             break
     if not account:
-        # 全垢使い切った場合はラウンドロビン
         account = ACCOUNTS[(target_row - 2) % len(ACCOUNTS)]
 
-    # 投稿文をリライト
-    original_text = target_data.get("投稿文", "")
-    post_text = rewrite_text(original_text)
-    print(f"リライト完了: {post_text[:60]}...")
+    # リライト済みテキストを使う（リライト不要）
+    post_text = target_data.get("リライト結果", "")
+    print(f"投稿文: {post_text[:60]}...")
 
-    # リプライ（URLがある場合のみ）
-    amazon_url = target_data.get("amazonURL", "")
-    rakuten_url = target_data.get("楽天URL", "")
-    amazon_list = amazon_url.split() if amazon_url else []
-    rakuten_list = rakuten_url.split() if rakuten_url else []
-
-    reply_text = ""
-    if amazon_list or rakuten_list:
-        original_reply = target_data.get("リプライ文言", "")
-        reply_text = rewrite_reply(original_reply, original_text, amazon_list, rakuten_list)
+    # リプライ結果
+    reply_text = target_data.get("リプライ結果", "")
+    if reply_text:
         print(f"リプライ: {reply_text[:60]}...")
 
     # メディア
