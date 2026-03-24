@@ -1,14 +1,13 @@
-"""GitHub Actions用: スプシから未投稿ストックを1件取得して投稿
+"""GitHub Actions用: スプシから未投稿ストックを取得して投稿
 
-24時間でN件のストックを均等間隔で投稿する。
-前回投稿からの経過時間をチェックし、間隔に達していたら投稿。
+投稿予定時刻（日付付き）が現在以前の未投稿分をまとめて処理。
+結果はZ列以降に分割記録（アカウント/日時/ID/URL/ステータス）。
 """
 import json
 import os
 import time
 from datetime import datetime, timezone, timedelta
 
-import anthropic
 import gspread
 import httpx
 
@@ -18,9 +17,7 @@ ACCOUNTS = json.loads(os.environ.get("ACCOUNTS_JSON", "[]"))
 GCP_CREDS = json.loads(os.environ.get("GCP_CREDENTIALS", "{}"))
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
-# 1日25投稿、58分間隔
-POSTS_PER_DAY = 25
-CYCLE_HOURS = 24
+MAX_PER_RUN = 10
 JST = timezone(timedelta(hours=9))
 
 
@@ -96,66 +93,13 @@ def post_with_reply(account, post_text, reply_text, media_urls):
     return main_id
 
 
-def rewrite_text(original, level="light"):
-    """投稿文をClaude APIでリライト"""
-    if not ANTHROPIC_API_KEY:
-        return original
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    levels = {
-        "light": "言い回しだけ軽く変える。構成・改行はほぼそのまま。元と7割似てOK",
-        "medium": "表現や切り口を少しアレンジ。元と5割似てOK",
-    }
-    resp = client.messages.create(
-        model="claude-sonnet-4-20250514", max_tokens=1024,
-        messages=[{"role": "user", "content": f"""以下の投稿文をリライトしてください。
-
-【元の投稿文】
-{original}
-
-【リライト強度】
-{levels.get(level, levels['light'])}
-
-【ルール】
-- 改行は元投稿を参考に読みやすく
-- ハッシュタグは使わない
-- 外国語の場合は自然な日本語に翻訳
-- リライト結果だけを返して"""}],
-    )
-    return resp.content[0].text.strip()
-
-
-def rewrite_reply(original_reply, post_text, amazon_urls, rakuten_urls):
-    """リプライをClaude APIでリライト+アフィURL付与"""
-    if not ANTHROPIC_API_KEY:
-        return original_reply
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    resp = client.messages.create(
-        model="claude-sonnet-4-20250514", max_tokens=512,
-        messages=[{"role": "user", "content": f"""以下のリプライを商品が売れるようにリライトしてください。
-
-【元のメイン投稿】
-{post_text[:200]}
-
-【元のリプライ】
-{original_reply}
-
-【ルール】
-- 紹介文は2〜3行で短く
-- 自然な口語体で押し売り感なし
-- 外国語なら日本語に翻訳
-- URLの下には何も書かない
-- 紹介文だけ返して。URL部分はこちらで付ける"""}],
-    )
-    intro = resp.content[0].text.strip()
-    parts = [intro, ""]
-    if rakuten_urls:
-        parts.append("楽天PR")
-        parts.append(rakuten_urls[0])
-        parts.append("")
-    if amazon_urls:
-        parts.append("amazonPR")
-        parts.append(amazon_urls[0])
-    return "\n".join(parts).strip()
+def _col_letter(col_num):
+    """列番号をアルファベットに変換（1=A, 27=AA）"""
+    result = ""
+    while col_num > 0:
+        col_num, remainder = divmod(col_num - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
 
 
 def main():
@@ -165,49 +109,57 @@ def main():
 
     gc = gspread.service_account_from_dict(GCP_CREDS)
     sh = gc.open_by_key(SPREADSHEET_ID)
-    ws = sh.get_worksheet(0)  # 元データ（ミックス）タブから読んで、投稿前にリライトする
+    ws = sh.get_worksheet(0)
 
     all_rows = ws.get_all_records()
     headers = ws.row_values(1)
 
-    # 「投稿済み」列を確認/追加
-    posted_col = None
+    # 結果記録用の列を確認/追加
+    result_cols = {
+        "投稿アカウント": None,
+        "投稿日時": None,
+        "投稿ID": None,
+        "投稿URL": None,
+        "ステータス": None,
+    }
     for i, h in enumerate(headers):
-        if h == "投稿済み":
-            posted_col = i + 1
-            break
-    if posted_col is None:
-        posted_col = len(headers) + 1
-        ws.update_cell(1, posted_col, "投稿済み")
+        if h in result_cols:
+            result_cols[h] = i + 1
 
-    # 未投稿数と総数を確認
-    total = sum(1 for r in all_rows if r.get("投稿文", ""))
-    posted = sum(1 for r in all_rows if r.get("投稿済み", ""))
-    remaining = total - posted
-
-    if remaining == 0:
-        print("未投稿のストックなし。終了。")
-        return
+    # 足りない列を追加
+    next_col = len(headers) + 1
+    for col_name, col_idx in result_cols.items():
+        if col_idx is None:
+            result_cols[col_name] = next_col
+            ws.update_cell(1, next_col, col_name)
+            next_col += 1
 
     now = datetime.now(JST)
-    now_hm = now.strftime("%H:%M")
+    now_str = now.strftime("%Y-%m-%d %H:%M")
     today_str = now.strftime("%Y-%m-%d")
 
-    print(f"総ストック: {total}件 / 投稿済み: {posted}件 / 残り: {remaining}件")
-    print(f"現在時刻(JST): {now_hm}")
+    # 未投稿数と総数
+    total = sum(1 for r in all_rows if r.get("投稿文", ""))
+    posted = sum(1 for r in all_rows if r.get("ステータス", "") == "成功" and today_str in str(r.get("投稿日時", "")))
+    remaining = total - posted
 
-    # 予定時刻を過ぎた未投稿をまとめて収集
+    print(f"総ストック: {total}件 / 今日投稿済み: {posted}件 / 残り: {remaining}件")
+    print(f"現在時刻(JST): {now_str}")
+
+    # 予定時刻を過ぎた未投稿を収集
     targets = []
     for i, row in enumerate(all_rows):
         rewritten = row.get("リライト結果", "")
-        scheduled = row.get("投稿予定時刻", "")
-        posted_val = str(row.get("投稿済み", ""))
+        scheduled = str(row.get("投稿予定時刻", ""))
+        status = str(row.get("ステータス", ""))
 
         if not rewritten or not scheduled:
             continue
-        if today_str in posted_val:
+        # 既に成功してたらスキップ
+        if status == "成功":
             continue
-        if scheduled > now_hm:
+        # 予定時刻が未来ならスキップ（日付付き比較）
+        if scheduled > now_str:
             continue
 
         targets.append((i + 2, row))
@@ -216,16 +168,15 @@ def main():
         print("投稿予定のストックなし。スキップ。")
         return
 
-    # 1回の実行で最大10件（残りは次のcronで処理）
-    MAX_PER_RUN = 10
     if len(targets) > MAX_PER_RUN:
         print(f"対象{len(targets)}件 → 今回は{MAX_PER_RUN}件だけ処理")
         targets = targets[:MAX_PER_RUN]
 
     print(f"今回投稿する件数: {len(targets)}件")
 
-    # まとめて投稿（各投稿間に30秒wait）
+    updates = []
     success_count = 0
+
     for idx, (target_row, target_data) in enumerate(targets):
         # 担当垢
         assigned = target_data.get("担当垢", "").replace("@", "")
@@ -259,19 +210,37 @@ def main():
                 pass
 
             timestamp = now.strftime("%Y-%m-%d %H:%M")
-            posted_value = f"@{account['name']} | {timestamp} | {post_id} | {permalink}"
-            ws.update_cell(target_row, posted_col, posted_value)
+
+            # Z列以降に分割記録
+            updates.append({"range": f"{_col_letter(result_cols['投稿アカウント'])}{target_row}", "values": [[f"@{account['name']}"]]})
+            updates.append({"range": f"{_col_letter(result_cols['投稿日時'])}{target_row}", "values": [[timestamp]]})
+            updates.append({"range": f"{_col_letter(result_cols['投稿ID'])}{target_row}", "values": [[str(post_id)]]})
+            updates.append({"range": f"{_col_letter(result_cols['投稿URL'])}{target_row}", "values": [[permalink]]})
+            updates.append({"range": f"{_col_letter(result_cols['ステータス'])}{target_row}", "values": [["成功"]]})
+
             print(f"  成功! post_id={post_id}")
             if permalink:
                 print(f"  URL: {permalink}")
             success_count += 1
 
         except Exception as e:
+            error_msg = str(e)[:100]
+            timestamp = now.strftime("%Y-%m-%d %H:%M")
+
+            # 失敗も記録
+            updates.append({"range": f"{_col_letter(result_cols['投稿アカウント'])}{target_row}", "values": [[f"@{account['name']}"]]})
+            updates.append({"range": f"{_col_letter(result_cols['投稿日時'])}{target_row}", "values": [[timestamp]]})
+            updates.append({"range": f"{_col_letter(result_cols['ステータス'])}{target_row}", "values": [[f"失敗: {error_msg}"]]})
+
             print(f"  失敗: {e}")
 
-        # 次の投稿まで30秒wait（最後の投稿以外）
+        # 次の投稿まで30秒wait
         if idx < len(targets) - 1:
             time.sleep(30)
+
+    # バッチ書き込み
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
 
     print(f"\n完了! {success_count}/{len(targets)}件投稿成功")
 

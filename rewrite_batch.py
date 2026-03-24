@@ -161,7 +161,11 @@ def main():
         "リプライ結果": None,
         "担当垢": None,
         "投稿予定時刻": None,
-        "投稿済み": None,
+        "投稿アカウント": None,
+        "投稿日時": None,
+        "投稿ID": None,
+        "投稿URL": None,
+        "ステータス": None,
     }
     for i, h in enumerate(headers):
         if h in needed_cols:
@@ -189,7 +193,7 @@ def main():
         print("ストックなし")
         return
 
-    # 投稿予定時刻を計算（GAS1時間トリガーに合わせる）
+    # 投稿予定時刻を計算（日付付きでセット）
     now = datetime.now(JST)
     today_start = now.replace(hour=0, minute=30, second=0, microsecond=0)
     interval_minutes = max(10, (23 * 60) // total)  # 143件なら約10分間隔
@@ -203,7 +207,7 @@ def main():
     for idx, (row_num, row) in enumerate(post_rows):
         account = ACCOUNTS[idx % len(ACCOUNTS)]
         scheduled_time = today_start + timedelta(minutes=interval_minutes * idx)
-        time_str = scheduled_time.strftime("%H:%M")
+        time_str = scheduled_time.strftime("%Y-%m-%d %H:%M")
 
         original_text = row.get("投稿文", "")
         original_reply = row.get("リプライ文言", "")
