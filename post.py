@@ -216,6 +216,12 @@ def main():
         print("投稿予定のストックなし。スキップ。")
         return
 
+    # 1回の実行で最大10件（残りは次のcronで処理）
+    MAX_PER_RUN = 10
+    if len(targets) > MAX_PER_RUN:
+        print(f"対象{len(targets)}件 → 今回は{MAX_PER_RUN}件だけ処理")
+        targets = targets[:MAX_PER_RUN]
+
     print(f"今回投稿する件数: {len(targets)}件")
 
     # まとめて投稿（各投稿間に30秒wait）
