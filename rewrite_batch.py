@@ -141,7 +141,17 @@ def rewrite_reply(client, original_reply, post_text, amazon_urls, rakuten_urls):
         parts.append("amazonPR")
         parts.append(converted_amazon[0])
 
-    return "\n".join(parts).strip()
+    result = "\n".join(parts).strip()
+    # 500文字制限: URLは削れないから紹介文を短縮
+    if len(result) > 500:
+        url_part = result[len(intro):]
+        max_intro = 500 - len(url_part) - 10
+        if max_intro > 20:
+            intro = intro[:max_intro].rsplit("。", 1)[0] + "。"
+        else:
+            intro = intro[:50]
+        result = (intro + url_part).strip()
+    return result
 
 
 def _write_summary(sh, total_posts, total_accounts, interval_min):
