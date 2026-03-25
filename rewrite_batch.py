@@ -70,9 +70,20 @@ def convert_amazon_url(url):
 def convert_rakuten_url(url):
     """楽天URLをジーマのアフィコード付きに変換"""
     url = clean_url(url)
+    if not url:
+        return ""
+
+    # 楽天以外のURL（Amazon等）が混入してたら無視
+    if "amazon" in url or "amzn" in url:
+        return ""
+
     # 短縮URL展開
     if "a.r10.to" in url:
         url = resolve_short_url(url)
+
+    # 楽天ドメインじゃなければ無視
+    if not any(d in url for d in ["rakuten.co.jp", "rakuten.ne.jp", "r10.to", "afl.rakuten"]):
+        return ""
 
     # 既にアフィリンクの場合はIDを差し替え
     if "hb.afl.rakuten.co.jp" in url:
