@@ -143,6 +143,67 @@ def rewrite_reply(client, original_reply, post_text, amazon_urls, rakuten_urls):
     return "\n".join(parts).strip()
 
 
+def _save_post_log(sh, all_rows):
+    """前日の投稿結果を「投稿ログ」タブに保存（1週間分保持）"""
+    try:
+        try:
+            log_ws = sh.worksheet("投稿ログ")
+        except Exception:
+            log_ws = sh.add_worksheet(title="投稿ログ", rows=2000, cols=8)
+            log_ws.update(
+                values=[["日付", "No", "アカウント", "投稿日時", "投稿ID", "投稿URL", "ステータス", "投稿文（先頭50字）"]],
+                range_name="A1:H1",
+                value_input_option="USER_ENTERED",
+            )
+
+        # 投稿済みの行を収集
+        new_logs = []
+        for row in all_rows:
+            status = str(row.get("ステータス", ""))
+            if not status:
+                continue
+            new_logs.append([
+                str(row.get("投稿日時", "")),
+                str(row.get("No", "")),
+                str(row.get("投稿アカウント", "")),
+                str(row.get("投稿日時", "")),
+                str(row.get("投稿ID", "")),
+                str(row.get("投稿URL", "")),
+                status,
+                str(row.get("リライト結果", ""))[:50],
+            ])
+
+        if new_logs:
+            # 末尾に追記
+            existing = log_ws.get_all_values()
+            next_row = len(existing) + 1
+            log_ws.update(
+                values=new_logs,
+                range_name=f"A{next_row}:H{next_row + len(new_logs) - 1}",
+                value_input_option="USER_ENTERED",
+            )
+            print(f"投稿ログ保存: {len(new_logs)}件")
+
+            # 1週間超え（7日前より古い）を削除
+            cutoff = (datetime.now(JST) - timedelta(days=7)).strftime("%Y-%m-%d")
+            all_log = log_ws.get_all_values()
+            # ヘッダー除外、日付が古い行を特定
+            rows_to_delete = []
+            for i, log_row in enumerate(all_log[1:], start=2):
+                if log_row[0] and log_row[0] < cutoff:
+                    rows_to_delete.append(i)
+            # 下から削除（行番号ずれ防止）
+            for row_idx in reversed(rows_to_delete):
+                log_ws.delete_rows(row_idx)
+            if rows_to_delete:
+                print(f"古いログ削除: {len(rows_to_delete)}件（{cutoff}以前）")
+        else:
+            print("投稿ログ: 保存対象なし")
+
+    except Exception as e:
+        print(f"投稿ログ保存エラー: {e}")
+
+
 def main():
     if not ACCOUNTS:
         print("ACCOUNTS_JSON が設定されていません")
@@ -154,6 +215,9 @@ def main():
 
     all_rows = ws.get_all_records()
     headers = ws.row_values(1)
+
+    # 前日の投稿結果を「投稿ログ」タブに保存
+    _save_post_log(sh, all_rows)
 
     # 必要な列を確認/追加
     needed_cols = {
