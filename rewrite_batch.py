@@ -85,6 +85,12 @@ def convert_rakuten_url(url):
     if not any(d in url for d in ["rakuten.co.jp", "rakuten.ne.jp", "r10.to", "afl.rakuten"]):
         return ""
 
+    # 楽天アフィリンクの中身（リダイレクト先）にAmazonが含まれてたら無視
+    from urllib.parse import unquote
+    decoded = unquote(unquote(url))
+    if "amazon" in decoded.lower():
+        return ""
+
     # 既にアフィリンクの場合はIDを差し替え
     if "hb.afl.rakuten.co.jp" in url:
         return re.sub(r'/hgc/[^/]+/', f'/hgc/{RAKUTEN_ID}/', url)
