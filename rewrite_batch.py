@@ -143,6 +143,42 @@ def rewrite_reply(client, original_reply, post_text, amazon_urls, rakuten_urls):
     return "\n".join(parts).strip()
 
 
+def _write_summary(sh, total_posts, total_accounts, interval_min):
+    """投稿設定タブに今日のサマリーを書き出し"""
+    try:
+        try:
+            ws = sh.worksheet("投稿設定")
+        except Exception:
+            ws = sh.add_worksheet(title="投稿設定", rows=20, cols=4)
+
+        now = datetime.now(JST)
+        posts_per_hour = max(1, 60 // interval_min)
+        hours_needed = total_posts / posts_per_hour if posts_per_hour > 0 else 24
+        posts_per_account = total_posts // total_accounts if total_accounts > 0 else 0
+
+        data = [
+            ["項目", "値", "", ""],
+            ["更新日時", now.strftime("%Y-%m-%d %H:%M"), "", ""],
+            ["", "", "", ""],
+            ["総ストック数", f"{total_posts}件", "", ""],
+            ["稼働アカウント数", f"{total_accounts}垢", "", ""],
+            ["1垢あたり投稿数", f"{posts_per_account}件/日", "", ""],
+            ["投稿間隔", f"{interval_min}分", "", ""],
+            ["1時間あたり投稿数", f"約{posts_per_hour}件", "", ""],
+            ["全投稿完了予想", f"約{hours_needed:.1f}時間", "", ""],
+            ["投稿時間帯", "0:30 〜 23:50", "", ""],
+            ["", "", "", ""],
+            ["1回の実行上限", "10件", "", ""],
+            ["トリガー", "GAS 毎時（:44分頃）", "", ""],
+        ]
+
+        ws.update(values=data, range_name="A1:D13", value_input_option="USER_ENTERED")
+        print(f"投稿設定タブ更新: {total_posts}件/{total_accounts}垢/{interval_min}分間隔")
+
+    except Exception as e:
+        print(f"投稿設定タブ更新エラー: {e}")
+
+
 def _save_post_log(sh, all_rows):
     """前日の投稿結果を「投稿ログ」タブに保存（1週間分保持）"""
     try:
@@ -331,6 +367,9 @@ def main():
     # 残りを書き込み
     if updates:
         ws.batch_update(updates, value_input_option="USER_ENTERED")
+
+    # 投稿設定タブにサマリーを書き出し
+    _write_summary(sh, total, len(ACCOUNTS), interval_minutes)
 
     print(f"\n完了! {total}件リライト+スケジュール設定")
 
