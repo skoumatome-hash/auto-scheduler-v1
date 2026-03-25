@@ -216,11 +216,15 @@ def main():
             post_id = post_with_reply(account, post_text, reply_text, media)
 
             permalink = ""
+            # permalink取得（投稿直後は反映されてない場合があるので少し待つ）
+            time.sleep(3)
             try:
                 info = api_request("GET", f"https://graph.threads.net/v1.0/{post_id}?fields=permalink&access_token={account['token']}")
                 permalink = info.get("permalink", "")
-            except Exception:
-                pass
+            except Exception as pe:
+                print(f"  permalink取得失敗: {pe}")
+                # ユーザー名から推測URLを生成
+                permalink = f"https://www.threads.com/@{account['name']}"
 
             timestamp = now.strftime("%Y-%m-%d %H:%M")
 
