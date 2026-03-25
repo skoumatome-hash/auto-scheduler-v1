@@ -249,7 +249,13 @@ def main():
             "range": f"{_col_letter(needed_cols['投稿予定時刻'])}{row_num}",
             "values": [[time_str]],
         })
-        # 投稿済み列は触らない（履歴として残す）
+        # 投稿結果列をリセット（前日分をクリア → 今日分で上書きされる）
+        for col_name in ["投稿アカウント", "投稿日時", "投稿ID", "投稿URL", "ステータス"]:
+            if needed_cols.get(col_name):
+                updates.append({
+                    "range": f"{_col_letter(needed_cols[col_name])}{row_num}",
+                    "values": [[""]],
+                })
 
         print(f"  [{idx+1}/{total}] @{account['name']} {time_str} | {rewritten_text[:40]}...")
 
