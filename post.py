@@ -146,6 +146,10 @@ def main():
     print(f"総ストック: {total}件 / 今日投稿済み: {posted}件 / 残り: {remaining}件")
     print(f"現在時刻(JST): {now_str}")
 
+    # デバッグ: 最初の3行のデータを表示
+    for i, row in enumerate(all_rows[:3]):
+        print(f"DEBUG row{i+2}: リライト={bool(row.get('リライト結果',''))}, 予定={repr(row.get('投稿予定時刻',''))}, ステータス={repr(row.get('ステータス',''))}")
+
     # 予定時刻を過ぎた未投稿を収集
     targets = []
     for i, row in enumerate(all_rows):
