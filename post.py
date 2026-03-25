@@ -187,7 +187,6 @@ def main():
 
     print(f"今回投稿する件数: {len(targets)}件")
 
-    updates = []
     success_count = 0
 
     for idx, (target_row, target_data) in enumerate(targets):
@@ -228,12 +227,15 @@ def main():
 
             timestamp = now.strftime("%Y-%m-%d %H:%M")
 
-            # Z列以降に分割記録
-            updates.append({"range": f"{_col_letter(result_cols['投稿アカウント'])}{target_row}", "values": [[f"@{account['name']}"]]})
-            updates.append({"range": f"{_col_letter(result_cols['投稿日時'])}{target_row}", "values": [[timestamp]]})
-            updates.append({"range": f"{_col_letter(result_cols['投稿ID'])}{target_row}", "values": [[str(post_id)]]})
-            updates.append({"range": f"{_col_letter(result_cols['投稿URL'])}{target_row}", "values": [[permalink]]})
-            updates.append({"range": f"{_col_letter(result_cols['ステータス'])}{target_row}", "values": [["成功"]]})
+            # 即時スプシ書き込み（1件ずつリアルタイム反映）
+            row_updates = [
+                {"range": f"{_col_letter(result_cols['投稿アカウント'])}{target_row}", "values": [[f"@{account['name']}"]]},
+                {"range": f"{_col_letter(result_cols['投稿日時'])}{target_row}", "values": [[timestamp]]},
+                {"range": f"{_col_letter(result_cols['投稿ID'])}{target_row}", "values": [[str(post_id)]]},
+                {"range": f"{_col_letter(result_cols['投稿URL'])}{target_row}", "values": [[permalink]]},
+                {"range": f"{_col_letter(result_cols['ステータス'])}{target_row}", "values": [["成功"]]},
+            ]
+            ws.batch_update(row_updates, value_input_option="USER_ENTERED")
 
             print(f"  成功! post_id={post_id}")
             if permalink:
@@ -244,20 +246,19 @@ def main():
             error_msg = str(e)[:100]
             timestamp = now.strftime("%Y-%m-%d %H:%M")
 
-            # 失敗も記録
-            updates.append({"range": f"{_col_letter(result_cols['投稿アカウント'])}{target_row}", "values": [[f"@{account['name']}"]]})
-            updates.append({"range": f"{_col_letter(result_cols['投稿日時'])}{target_row}", "values": [[timestamp]]})
-            updates.append({"range": f"{_col_letter(result_cols['ステータス'])}{target_row}", "values": [[f"失敗: {error_msg}"]]})
+            # 失敗も即時記録
+            row_updates = [
+                {"range": f"{_col_letter(result_cols['投稿アカウント'])}{target_row}", "values": [[f"@{account['name']}"]]},
+                {"range": f"{_col_letter(result_cols['投稿日時'])}{target_row}", "values": [[timestamp]]},
+                {"range": f"{_col_letter(result_cols['ステータス'])}{target_row}", "values": [[f"失敗: {error_msg}"]]},
+            ]
+            ws.batch_update(row_updates, value_input_option="USER_ENTERED")
 
             print(f"  失敗: {e}")
 
         # 次の投稿まで30秒wait
         if idx < len(targets) - 1:
             time.sleep(30)
-
-    # バッチ書き込み
-    if updates:
-        ws.batch_update(updates, value_input_option="USER_ENTERED")
 
     print(f"\n完了! {success_count}/{len(targets)}件投稿成功")
 
