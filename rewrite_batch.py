@@ -99,6 +99,7 @@ def rewrite_text(client, original):
 - 言い回しだけ軽く変える。構成・改行はほぼそのまま
 - ハッシュタグは使わない
 - 外国語の場合は自然な日本語に翻訳
+- **必ず500文字以内に収める**（Threads APIの制限）
 - リライト結果だけを返して"""}],
     )
     return resp.content[0].text.strip()

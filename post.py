@@ -39,6 +39,12 @@ def post_with_reply(account, post_text, reply_text, media_urls):
     base = f"https://graph.threads.net/v1.0/{user_id}/threads"
     pub = f"https://graph.threads.net/v1.0/{user_id}/threads_publish"
 
+    # Threads APIの500文字制限対策
+    if len(post_text) > 500:
+        post_text = post_text[:497] + "..."
+    if reply_text and len(reply_text) > 500:
+        reply_text = reply_text[:497] + "..."
+
     video_urls = [u for u in media_urls if "/video/upload/" in u or u.endswith((".mp4", ".mov"))]
     image_urls = [u for u in media_urls if u not in video_urls]
     post_media = video_urls if video_urls else image_urls
