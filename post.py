@@ -146,23 +146,32 @@ def main():
     print(f"総ストック: {total}件 / 今日投稿済み: {posted}件 / 残り: {remaining}件")
     print(f"現在時刻(JST): {now_str}")
 
-    # デバッグ: 最初の3行のデータを表示
-    for i, row in enumerate(all_rows[:3]):
-        print(f"DEBUG row{i+2}: リライト={bool(row.get('リライト結果',''))}, 予定={repr(row.get('投稿予定時刻',''))}, ステータス={repr(row.get('ステータス',''))}")
-
     # 予定時刻を過ぎた未投稿を収集
     targets = []
     for i, row in enumerate(all_rows):
         rewritten = row.get("リライト結果", "")
-        scheduled = str(row.get("投稿予定時刻", ""))
+        scheduled_raw = str(row.get("投稿予定時刻", ""))
         status = str(row.get("ステータス", ""))
 
-        if not rewritten or not scheduled:
+        if not rewritten or not scheduled_raw:
             continue
         # 既に成功してたらスキップ
         if status == "成功":
             continue
-        # 予定時刻が未来ならスキップ（日付付き比較）
+
+        # Google Sheetsの時刻ゼロ落ち対策（"2026-03-25 0:30" → "2026-03-25 00:30"）
+        try:
+            scheduled_dt = datetime.strptime(scheduled_raw, "%Y-%m-%d %H:%M")
+            scheduled = scheduled_dt.strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            # 旧形式（時刻のみ "09:00"）の場合は今日の日付を付与
+            try:
+                scheduled_dt = datetime.strptime(f"{today_str} {scheduled_raw}", "%Y-%m-%d %H:%M")
+                scheduled = scheduled_dt.strftime("%Y-%m-%d %H:%M")
+            except ValueError:
+                continue
+
+        # 予定時刻が未来ならスキップ
         if scheduled > now_str:
             continue
 
