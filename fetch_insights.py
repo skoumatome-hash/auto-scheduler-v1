@@ -3,7 +3,6 @@ import json
 import os
 from datetime import datetime, timezone, timedelta
 
-import gspread
 import httpx
 
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "")
@@ -103,55 +102,27 @@ def fetch_all_insights():
     return results
 
 
-def save_to_spreadsheet(results):
-    """スプシの「インサイトログ」タブに記録"""
-    gc = gspread.service_account_from_dict(GCP_CREDS)
-    sh = gc.open_by_key(SPREADSHEET_ID)
-
-    # インサイトログタブを取得 or 作成
-    tab_name = "インサイトログ"
-    try:
-        ws = sh.worksheet(tab_name)
-    except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=tab_name, rows=1000, cols=10)
-        ws.update("A1:J1", [[
-            "日付", "アカウント", "フォロワー", "総views(API)",
-            "直近5投稿avg views", "直近5投稿合計views", "直近5投稿合計likes",
-            "投稿数", "ステータス", "更新時刻"
-        ]])
-
+def save_to_json(results):
+    """JSONファイルとして保存（Gitにコミットしてダッシュボードが読む）"""
     now = datetime.now(JST)
     today = now.strftime("%Y-%m-%d")
-    time_str = now.strftime("%H:%M")
 
-    rows = []
-    for r in results:
-        rows.append([
-            today,
-            r["name"],
-            r["followers"],
-            r["total_views"],
-            r["avg_views"],
-            r["total_post_views"],
-            r["total_likes"],
-            r["post_count"],
-            r["status"],
-            time_str,
-        ])
+    # 日別JSONファイルに出力
+    output = {
+        "date": today,
+        "updated_at": now.strftime("%Y-%m-%d %H:%M"),
+        "accounts": results,
+    }
 
-    # 既存の当日データがあれば削除してから追記
-    existing = ws.get_all_values()
-    delete_rows = []
-    for i, row in enumerate(existing[1:], start=2):  # ヘッダースキップ
-        if row and row[0] == today:
-            delete_rows.append(i)
+    # data/ディレクトリに保存
+    os.makedirs("data", exist_ok=True)
+    filepath = f"data/insights_{today}.json"
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(output, f, ensure_ascii=False, indent=2)
 
-    # 下から削除（インデックスずれ防止）
-    for idx in reversed(delete_rows):
-        ws.delete_rows(idx)
-
-    # 追記
-    ws.append_rows(rows, value_input_option="USER_ENTERED")
+    # 最新データとしても保存
+    with open("data/insights_latest.json", "w", encoding="utf-8") as f:
+        json.dump(output, f, ensure_ascii=False, indent=2)
 
     # サマリー表示
     active = sum(1 for r in results if r["status"] == "正常稼働")
@@ -160,7 +131,7 @@ def save_to_spreadsheet(results):
     total_f = sum(r["followers"] for r in results)
     total_v = sum(r["total_post_views"] for r in results)
 
-    print(f"インサイト取得完了: {len(results)}垢")
+    print(f"インサイト取得完了: {len(results)}垢 → {filepath}")
     print(f"  正常稼働: {active} / シャドウバン: {shadow} / エラー: {error}")
     print(f"  フォロワー合計: {total_f} / 直近投稿views合計: {total_v}")
 
@@ -168,5 +139,5 @@ def save_to_spreadsheet(results):
 if __name__ == "__main__":
     print("インサイト取得開始...")
     results = fetch_all_insights()
-    save_to_spreadsheet(results)
+    save_to_json(results)
     print("完了!")

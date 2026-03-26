@@ -25,9 +25,15 @@ jobs:
       - name: Fetch insights (imp/follower data)
         env:
           ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
-          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
-          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
         run: python fetch_insights.py
+
+      - name: Commit insights data
+        run: |
+          git config user.name "threads-bot"
+          git config user.email "bot@threads.auto"
+          git add data/ || true
+          git diff --staged --quiet || git commit -m "[auto] daily insights $(date +%Y-%m-%d)"
+          git push || true
 
       - name: Run rewrite batch
         env:
