@@ -20,7 +20,14 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install gspread google-auth anthropic
+        run: pip install gspread google-auth anthropic httpx
+
+      - name: Fetch insights (imp/follower data)
+        env:
+          ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: python fetch_insights.py
 
       - name: Run rewrite batch
         env:
