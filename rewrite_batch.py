@@ -326,6 +326,10 @@ def main():
     today_start = now.replace(hour=0, minute=30, second=0, microsecond=0)
     interval_minutes = max(10, (23 * 60) // total)  # 143件なら約10分間隔
 
+    # 毎日シャッフル（同じNoが毎日同じ時間帯にならないように）
+    import random
+    random.shuffle(post_rows)
+
     # 担当垢を割り当て（ラウンドロビン）
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
