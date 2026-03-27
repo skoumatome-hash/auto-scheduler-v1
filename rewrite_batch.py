@@ -108,9 +108,25 @@ def convert_rakuten_url(url):
     return f"https://hb.afl.rakuten.co.jp/hgc/{RAKUTEN_ID}/?pc={quote(url)}"
 
 
+def _api_call_with_retry(fn, max_retries=3):
+    """Claude API呼び出し（500エラー時にリトライ）"""
+    import time as _t
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except Exception as e:
+            if '500' in str(e) or '529' in str(e) or 'overloaded' in str(e).lower():
+                wait = 10 * (attempt + 1)
+                print(f"  API Error (attempt {attempt+1}/{max_retries}): {str(e)[:60]}... {wait}秒待機")
+                _t.sleep(wait)
+            else:
+                raise
+    return fn()
+
+
 def rewrite_text(client, original):
     """投稿文をリライト"""
-    resp = client.messages.create(
+    resp = _api_call_with_retry(lambda: client.messages.create(
         model="claude-sonnet-4-20250514", max_tokens=1024,
         messages=[{"role": "user", "content": f"""以下の投稿文をリライトしてください。
 
@@ -123,13 +139,13 @@ def rewrite_text(client, original):
 - 外国語の場合は自然な日本語に翻訳
 - **必ず500文字以内に収める**（Threads APIの制限）
 - リライト結果だけを返して"""}],
-    )
+    ))
     return resp.content[0].text.strip()
 
 
 def rewrite_reply(client, original_reply, post_text, amazon_urls, rakuten_urls):
     """リプライをリライト+アフィURL付与"""
-    resp = client.messages.create(
+    resp = _api_call_with_retry(lambda: client.messages.create(
         model="claude-sonnet-4-20250514", max_tokens=512,
         messages=[{"role": "user", "content": f"""以下のリプライを商品が売れるようにリライトしてください。
 
@@ -145,7 +161,7 @@ def rewrite_reply(client, original_reply, post_text, amazon_urls, rakuten_urls):
 - 外国語なら日本語に翻訳
 - URLの下には何も書かない
 - 紹介文だけ返して。URL部分はこちらで付ける"""}],
-    )
+    ))
     intro = resp.content[0].text.strip()
     parts = [intro, ""]
 
