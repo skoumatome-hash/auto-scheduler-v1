@@ -13,7 +13,7 @@ import gspread
 import httpx
 
 # 環境変数から設定
-SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "1KpU_pGjpDFIImq4iHUqrsXqdpCoYOGjfp09mJ_j9iAs")
+SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "")
 REPLY_DELAY = int(os.environ.get("REPLY_DELAY", "5"))
 
 # 5垢の情報

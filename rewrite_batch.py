@@ -3,7 +3,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone, timedelta
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import anthropic
 import gspread
@@ -22,23 +22,28 @@ JST = timezone(timedelta(hours=9))
 
 
 def clean_url(url):
-    """URLの末尾のゴミ文字（絵文字、ゼロ幅文字、ORC U+FFFC等）を除去"""
+    """URLの末尾のゴミ文字（絵文字、ゼロ幅文字、ORC U+FFFC等）を除去 + l.threads.comデコード"""
     url = url.strip()
     while url and (ord(url[-1]) > 127 or ord(url[-1]) < 33):
         url = url[:-1]
     url = url.rstrip('.,;:!?）)」』】>》')
+    # l.threads.comのリダイレクトURLから実URLを抽出
+    if "l.threads.com" in url or "l.threads.net" in url:
+        m = re.search(r'[?&]u=([^&]+)', url)
+        if m:
+            url = unquote(m.group(1))
     return url
 
 
 def resolve_short_url(short_url):
-    """短縮URL（amzn.to, a.r10.to等）を展開してリダイレクト先を取得"""
+    """短縮URL（amzn.to, a.r10.to等）を全段展開してリダイレクト先を取得"""
     short_url = clean_url(short_url)
     try:
-        with httpx.Client(follow_redirects=False, timeout=10) as client:
+        with httpx.Client(follow_redirects=True, timeout=10) as client:
             resp = client.head(short_url)
-            loc = resp.headers.get("location", "")
-            if loc and loc.startswith("http"):
-                return loc
+            final = str(resp.url)
+            if final and final.startswith("http"):
+                return final
             return short_url
     except Exception:
         return short_url
@@ -144,21 +149,55 @@ def rewrite_reply(client, original_reply, post_text, amazon_urls, rakuten_urls):
     intro = resp.content[0].text.strip()
     parts = [intro, ""]
 
-    # 楽天URLをジーマのアフィコードに変換
+    # 楽天URLをジーマのアフィコードに変換（重複排除、最大2つ）
     converted_rakuten = [convert_rakuten_url(u) for u in rakuten_urls if u]
-    converted_rakuten = [u for u in converted_rakuten if u]  # 空文字除去（楽天ROOM等）
-    if converted_rakuten:
-        parts.append("楽天PR")
-        parts.append(converted_rakuten[0])
+    converted_rakuten = [u for u in converted_rakuten if u]
+    # URL重複排除（pcパラメータのデコード値で比較）
+    seen_rak = set()
+    unique_rakuten = []
+    for url in converted_rakuten:
+        pc_m = re.search(r'pc=([^&]+)', url)
+        key = unquote(pc_m.group(1)) if pc_m else url
+        if key not in seen_rak:
+            seen_rak.add(key)
+            unique_rakuten.append(url)
+    converted_rakuten = unique_rakuten[:2]
+    for i, rurl in enumerate(converted_rakuten):
+        parts.append("楽天PR" if i == 0 else "楽天")
+        parts.append(rurl)
         parts.append("")
 
-    # AmazonURLをジーマのアフィコードに変換
+    # AmazonURLをジーマのアフィコードに変換（ASIN重複排除、最大2つ）
     converted_amazon = [convert_amazon_url(u) for u in amazon_urls if u]
-    if converted_amazon:
-        parts.append("amazonPR")
-        parts.append(converted_amazon[0])
+    converted_amazon = [u for u in converted_amazon if u]
+    # ASIN単位で重複排除
+    seen_asins = set()
+    unique_amazon = []
+    for url in converted_amazon:
+        asin_m = re.search(r'/dp/([A-Z0-9]{10})', url)
+        asin = asin_m.group(1) if asin_m else url
+        if asin not in seen_asins:
+            seen_asins.add(asin)
+            unique_amazon.append(url)
+    converted_amazon = unique_amazon[:2]
+    for i, aurl in enumerate(converted_amazon):
+        parts.append("amazonPR" if i == 0 else "amazon")
+        parts.append(aurl)
 
     result = "\n".join(parts).strip()
+
+    # URLチェック: beautyhack-22以外のタグが残ってたらエラーログ
+    bad_tags = re.findall(r'tag=([a-z0-9_-]+)', result)
+    bad_tags = [t for t in bad_tags if t != AMAZON_TAG]
+    if bad_tags:
+        print(f"  WARNING: 他人のAmazonタグ検出: {bad_tags}")
+        # 強制差し替え
+        result = re.sub(r'tag=[a-z0-9_-]+', f'tag={AMAZON_TAG}', result)
+
+    # 楽天IDチェック
+    if RAKUTEN_ID.split('.')[0] not in result and "hb.afl.rakuten" in result:
+        print(f"  WARNING: 楽天IDが不正")
+
     # 500文字制限: URLは削れないから紹介文を短縮
     if len(result) > 500:
         url_part = result[len(intro):]
@@ -345,8 +384,16 @@ def main():
         original_reply = row.get("リプライ文言", "")
         amazon_url = row.get("amazonURL", "")
         rakuten_url = row.get("楽天URL", "")
-        amazon_list = amazon_url.split() if amazon_url else []
-        rakuten_list = rakuten_url.split() if rakuten_url else []
+        # 改行・スペース・カンマ区切りで複数URL対応
+        amazon_list = [u.strip() for u in re.split(r'[\n\s,]+', amazon_url) if u.strip() and ('amazon' in u or 'amzn' in u)]
+        rakuten_list = [u.strip() for u in re.split(r'[\n\s,]+', rakuten_url) if u.strip() and ('rakuten' in u or 'r10.to' in u)]
+        # 3つ以上は先頭2つだけ使う
+        if len(amazon_list) > 2:
+            print(f"  [{idx+1}] Amazon URL {len(amazon_list)}個 -> 2個に制限")
+            amazon_list = amazon_list[:2]
+        if len(rakuten_list) > 2:
+            print(f"  [{idx+1}] 楽天 URL {len(rakuten_list)}個 -> 2個に制限")
+            rakuten_list = rakuten_list[:2]
 
         # リライト
         try:
@@ -363,6 +410,31 @@ def main():
             except Exception as e:
                 print(f"  [{idx+1}/{total}] リプライリライト失敗: {e}")
                 rewritten_reply = original_reply
+
+        # 最終URLチェック（W列に書く前にタグ確認）
+        if rewritten_reply:
+            final_bad = re.findall(r'tag=([a-z0-9_-]+)', rewritten_reply)
+            final_bad = [t for t in final_bad if t != AMAZON_TAG]
+            if final_bad:
+                print(f"  [{idx+1}] CRITICAL: W列に他人タグ残存 {final_bad} -> 強制差替え")
+                rewritten_reply = re.sub(r'tag=[a-z0-9_-]+', f'tag={AMAZON_TAG}', rewritten_reply)
+
+        # I列/J列も展開済みURLで更新（amzn.toの短縮をフルURLに）
+        converted_amz_for_sheet = [convert_amazon_url(u) for u in amazon_list if u]
+        converted_amz_for_sheet = [u for u in converted_amz_for_sheet if u]
+        converted_rak_for_sheet = [convert_rakuten_url(u) for u in rakuten_list if u]
+        converted_rak_for_sheet = [u for u in converted_rak_for_sheet if u]
+
+        if needed_cols.get("amazonURL") and converted_amz_for_sheet:
+            updates.append({
+                "range": f"{_col_letter(needed_cols['amazonURL'])}{row_num}",
+                "values": [["\n".join(converted_amz_for_sheet)]],
+            })
+        if needed_cols.get("楽天URL") and converted_rak_for_sheet:
+            updates.append({
+                "range": f"{_col_letter(needed_cols['楽天URL'])}{row_num}",
+                "values": [["\n".join(converted_rak_for_sheet)]],
+            })
 
         # 更新データ
         updates.append({
