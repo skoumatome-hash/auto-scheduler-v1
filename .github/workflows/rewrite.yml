@@ -1,10 +1,9 @@
 name: Daily Rewrite Batch
 
 on:
-  # scheduleは無効化（GASから確実にトリガーする）
-  # schedule:
-  #   - cron: '0 15 * * *'
-  workflow_dispatch:  # GASまたは手動でトリガー
+  schedule:
+    - cron: '12 15 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: write
