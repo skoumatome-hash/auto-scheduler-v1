@@ -27,7 +27,7 @@ jobs:
           GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          REPLY_DELAY: '5'
+          REPLY_DELAY: '60'
         run: python post.py
 
       - name: Notify on failure
