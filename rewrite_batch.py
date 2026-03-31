@@ -165,17 +165,14 @@ def rewrite_reply(client, original_reply, post_text, amazon_urls, rakuten_urls):
     intro = resp.content[0].text.strip()
     parts = [intro, ""]
 
-    # 楽天URLをジーマのアフィコードに変換（重複排除、最大2つ）
-    converted_rakuten = [convert_rakuten_url(u) for u in rakuten_urls if u]
-    converted_rakuten = [u for u in converted_rakuten if u]
-    # URL重複排除（pcパラメータのデコード値で比較）
+    # 楽天URL: I列/J列の短縮URLをそのまま使う（convert不要。事前にジーマのIDで生成済み）
+    converted_rakuten = [u.strip() for u in rakuten_urls if u.strip()]
+    # 重複排除
     seen_rak = set()
     unique_rakuten = []
     for url in converted_rakuten:
-        pc_m = re.search(r'pc=([^&]+)', url)
-        key = unquote(pc_m.group(1)) if pc_m else url
-        if key not in seen_rak:
-            seen_rak.add(key)
+        if url not in seen_rak:
+            seen_rak.add(url)
             unique_rakuten.append(url)
     converted_rakuten = unique_rakuten[:2]
     for i, rurl in enumerate(converted_rakuten):
@@ -183,17 +180,14 @@ def rewrite_reply(client, original_reply, post_text, amazon_urls, rakuten_urls):
         parts.append(rurl)
         parts.append("")
 
-    # AmazonURLをジーマのアフィコードに変換（ASIN重複排除、最大2つ）
-    converted_amazon = [convert_amazon_url(u) for u in amazon_urls if u]
-    converted_amazon = [u for u in converted_amazon if u]
-    # ASIN単位で重複排除
-    seen_asins = set()
+    # AmazonURL: I列/J列の短縮URLをそのまま使う（convert不要。事前にジーマのIDで生成済み）
+    converted_amazon = [u.strip() for u in amazon_urls if u.strip()]
+    # 重複排除
+    seen_amz = set()
     unique_amazon = []
     for url in converted_amazon:
-        asin_m = re.search(r'/dp/([A-Z0-9]{10})', url)
-        asin = asin_m.group(1) if asin_m else url
-        if asin not in seen_asins:
-            seen_asins.add(asin)
+        if url not in seen_amz:
+            seen_amz.add(url)
             unique_amazon.append(url)
     converted_amazon = unique_amazon[:2]
     for i, aurl in enumerate(converted_amazon):
@@ -349,15 +343,18 @@ def main():
         "投稿ID": None,
         "投稿URL": None,
         "ステータス": None,
+        "amazonURL": None,
+        "楽天URL": None,
     }
     for i, h in enumerate(headers):
         if h in needed_cols:
             needed_cols[h] = i + 1
 
-    # 足りない列を追加
+    # 足りない列を追加（amazonURL/楽天URLは元データの既存列なので追加しない）
+    existing_only_cols = {"amazonURL", "楽天URL"}
     next_col = len(headers) + 1
     for col_name, col_idx in needed_cols.items():
-        if col_idx is None:
+        if col_idx is None and col_name not in existing_only_cols:
             needed_cols[col_name] = next_col
             ws.update_cell(1, next_col, col_name)
             next_col += 1
@@ -435,22 +432,7 @@ def main():
                 print(f"  [{idx+1}] CRITICAL: W列に他人タグ残存 {final_bad} -> 強制差替え")
                 rewritten_reply = re.sub(r'tag=[a-z0-9_-]+', f'tag={AMAZON_TAG}', rewritten_reply)
 
-        # I列/J列も展開済みURLで更新（amzn.toの短縮をフルURLに）
-        converted_amz_for_sheet = [convert_amazon_url(u) for u in amazon_list if u]
-        converted_amz_for_sheet = [u for u in converted_amz_for_sheet if u]
-        converted_rak_for_sheet = [convert_rakuten_url(u) for u in rakuten_list if u]
-        converted_rak_for_sheet = [u for u in converted_rak_for_sheet if u]
-
-        if needed_cols.get("amazonURL") and converted_amz_for_sheet:
-            updates.append({
-                "range": f"{_col_letter(needed_cols['amazonURL'])}{row_num}",
-                "values": [["\n".join(converted_amz_for_sheet)]],
-            })
-        if needed_cols.get("楽天URL") and converted_rak_for_sheet:
-            updates.append({
-                "range": f"{_col_letter(needed_cols['楽天URL'])}{row_num}",
-                "values": [["\n".join(converted_rak_for_sheet)]],
-            })
+        # I列/J列は触らない（事前にジーマのIDで短縮URL生成済み）
 
         # 更新データ
         updates.append({
