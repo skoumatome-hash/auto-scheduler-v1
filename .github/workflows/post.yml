@@ -1,7 +1,7 @@
 name: Threads Auto Post
 
 on:
- schedule:
+  schedule:
     - cron: '12 * * * *'
   workflow_dispatch:
 
