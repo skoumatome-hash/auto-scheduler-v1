@@ -144,65 +144,55 @@ def rewrite_text(client, original):
 
 
 def rewrite_reply(client, original_reply, post_text, amazon_urls, rakuten_urls):
-    """リプライをリライト+アフィURL付与"""
+    """リプライをリライト+アフィURL付与（強垢風シンプルフォーマット）"""
     resp = _api_call_with_retry(lambda: client.messages.create(
         model="claude-sonnet-4-20250514", max_tokens=512,
-        messages=[{"role": "user", "content": f"""以下のリプライを商品が売れるようにリライトしてください。
+        messages=[{"role": "user", "content": f"""以下の投稿に合う商品紹介の一言を書いてください。
 
-【元のメイン投稿】
+【投稿内容】
 {post_text[:200]}
 
-【元のリプライ】
+【参考（元のリプライ）】
 {original_reply}
 
 【ルール】
-- 紹介文は2〜3行で短く
-- 自然な口語体で押し売り感なし
-- 外国語なら日本語に翻訳
-- URLの下には何も書かない
-- 紹介文だけ返して。URL部分はこちらで付ける"""}],
+- 1〜2行で超短く（「これマジで良かった」「気になる人はこちら」レベル）
+- 自然な口語体。押し売り感なし
+- 「楽天」「amazon」「PR」「ad」等のラベルは絶対書くな
+- URLは絶対書くな（こちらで付ける）
+- 紹介の一言だけ返して"""}],
     ))
     intro = resp.content[0].text.strip()
-    parts = [intro, ""]
+    # 紹介文からURL・ラベル残りを除去
+    intro = re.sub(r'https?://[^\s\u3000]+', '', intro)
+    intro = re.sub(r'(?i)(楽天|amazon|amzn|rakuten|PR|ad)\s*(pr|PR)?', '', intro)
+    intro = re.sub(r'\n{2,}', '\n', intro).strip()
 
-    # 楽天URL: I列/J列の短縮URLをそのまま使う（convert不要。事前にジーマのIDで生成済み）
-    converted_rakuten = [u.strip() for u in rakuten_urls if u.strip()]
-    # 重複排除
-    seen_rak = set()
-    unique_rakuten = []
-    for url in converted_rakuten:
-        if url not in seen_rak:
-            seen_rak.add(url)
-            unique_rakuten.append(url)
-    converted_rakuten = unique_rakuten[:2]
-    for i, rurl in enumerate(converted_rakuten):
-        parts.append("楽天PR" if i == 0 else "楽天")
-        parts.append(rurl)
-        parts.append("")
+    # URL付与（強垢風: 紹介文 + URL pr）
+    parts = [intro]
+    # 楽天とAmazonの重複排除
+    rak_unique = list(dict.fromkeys(u.strip() for u in rakuten_urls if u.strip()))[:1]
+    amz_unique = list(dict.fromkeys(u.strip() for u in amazon_urls if u.strip()))[:1]
 
-    # AmazonURL: I列/J列の短縮URLをそのまま使う（convert不要。事前にジーマのIDで生成済み）
-    converted_amazon = [u.strip() for u in amazon_urls if u.strip()]
-    # 重複排除
-    seen_amz = set()
-    unique_amazon = []
-    for url in converted_amazon:
-        if url not in seen_amz:
-            seen_amz.add(url)
-            unique_amazon.append(url)
-    converted_amazon = unique_amazon[:2]
-    for i, aurl in enumerate(converted_amazon):
-        parts.append("amazonPR" if i == 0 else "amazon")
-        parts.append(aurl)
+    if rak_unique:
+        parts.append(f"{rak_unique[0]} pr")
+    if amz_unique:
+        parts.append(f"{amz_unique[0]} pr")
 
     result = "\n".join(parts).strip()
 
-    # URLチェック: beautyhack-22以外のタグが残ってたらエラーログ
-    bad_tags = re.findall(r'tag=([a-z0-9_-]+)', result)
-    bad_tags = [t for t in bad_tags if t != AMAZON_TAG]
-    if bad_tags:
-        print(f"  WARNING: 他人のAmazonタグ検出: {bad_tags}")
-        # 強制差し替え
-        result = re.sub(r'tag=[a-z0-9_-]+', f'tag={AMAZON_TAG}', result)
+    # URLが1つも入ってなければ空返し（リプライ投稿しない）
+    if not rak_unique and not amz_unique:
+        return ""
+
+    # 安全チェック: W列のURLがI列/J列のものだけか確認
+    all_urls_in_result = re.findall(r'https?://[^\s\u3000]+', result)
+    allowed_urls = set(rak_unique + amz_unique)
+    for url in all_urls_in_result:
+        clean_url = url.rstrip('.,;:')
+        if clean_url not in allowed_urls:
+            print(f"  CRITICAL: 許可外URL検出 {clean_url} -> 除去")
+            result = result.replace(url, '')
 
     # 楽天IDチェック
     if RAKUTEN_ID.split('.')[0] not in result and "hb.afl.rakuten" in result:
