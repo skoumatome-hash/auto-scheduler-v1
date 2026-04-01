@@ -417,7 +417,15 @@ def main():
 
         # リプライ（URLがある場合のみ）
         rewritten_reply = ""
-        if (amazon_list or rakuten_list) and original_reply:
+        if amazon_list or rakuten_list:
+            # H列が空でもI列/J列にURLがあればリプライを自動生成
+            if not original_reply:
+                parts = []
+                if rakuten_list:
+                    parts.append("楽天PR\n" + rakuten_list[0])
+                if amazon_list:
+                    parts.append("amazonPR\n" + amazon_list[0])
+                original_reply = "\n\n".join(parts)
             try:
                 rewritten_reply = rewrite_reply(client, original_reply, original_text, amazon_list, rakuten_list)
             except Exception as e:
