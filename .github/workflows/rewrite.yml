@@ -39,9 +39,5 @@ jobs:
           git diff --staged --quiet || git commit -m "[auto] daily insights $(date +%Y-%m-%d)"
           git push || true
 
-      - name: Reschedule posts (no rewrite - done by Claude Code in morning)
-        env:
-          ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
-          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
-          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
-        run: python reschedule.py
+      - name: Skip reschedule
+        run: echo "Reschedule skipped - managed by Claude Code"
